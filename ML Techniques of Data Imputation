@@ -1,0 +1,289 @@
+# Import necessary libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.impute import KNNImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.impute import IterativeImputer
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import warnings
+warnings.filterwarnings('ignore')
+
+# For Google Colab - Upload file
+from google.colab import files
+print("Please upload your Excel file:")
+uploaded = files.upload()
+
+# Step 1: Load Excel file
+filename = list(uploaded.keys())[0]
+df_original = pd.read_excel(filename)
+print(f"Original dataset shape: {df_original.shape}")
+print("\nFirst few rows of original data:")
+print(df_original.head())
+
+# Step 2: Reverse the data (last row to first, first to last)
+df = df_original.iloc[::-1].reset_index(drop=True)
+print("\n" + "="*60)
+print("Data reversed successfully!")
+print(f"Reversed dataset shape: {df.shape}")
+print("\nFirst few rows of reversed data:")
+print(df.head())
+
+# Step 3: Exploratory Data Analysis
+print("\n" + "="*60)
+print("EXPLORATORY DATA ANALYSIS")
+print("="*60)
+
+# Basic statistics
+print("\nDataset Info:")
+print(df.info())
+print("\nDescriptive Statistics:")
+print(df.describe())
+
+# Check for missing values
+print("\nMissing values in original data:")
+print(df.isnull().sum())
+
+# Identify numeric columns only
+numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+print(f"\nNumeric columns: {numeric_cols}")
+
+# Correlation matrix
+if len(numeric_cols) > 1:
+    plt.figure(figsize=(12, 10))
+    correlation_matrix = df[numeric_cols].corr()
+    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0, 
+                fmt='.2f', square=True, linewidths=1)
+    plt.title('Correlation Matrix of Numeric Variables', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+# Distribution plots
+if len(numeric_cols) > 0:
+    n_cols = min(3, len(numeric_cols))
+    n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5*n_rows))
+    axes = axes.flatten() if len(numeric_cols) > 1 else [axes]
+    
+    for idx, col in enumerate(numeric_cols):
+        axes[idx].hist(df[col].dropna(), bins=30, edgecolor='black', alpha=0.7)
+        axes[idx].set_title(f'Distribution of {col}')
+        axes[idx].set_xlabel(col)
+        axes[idx].set_ylabel('Frequency')
+    
+    # Hide unused subplots
+    for idx in range(len(numeric_cols), len(axes)):
+        axes[idx].set_visible(False)
+    
+    plt.tight_layout()
+    plt.show()
+
+# Step 3: Select variable to be predicted
+print("\n" + "="*60)
+print("VARIABLE SELECTION FOR PREDICTION")
+print("="*60)
+print("\nAvailable numeric columns:")
+for i, col in enumerate(numeric_cols, 1):
+    print(f"{i}. {col}")
+
+# For automation, select the last numeric column or you can modify this
+target_variable = numeric_cols[-1]
+print(f"\nSelected target variable for imputation: {target_variable}")
+
+# Step 4: Remove 20% of data at random from the target variable
+print("\n" + "="*60)
+print("CREATING MISSING DATA")
+print("="*60)
+
+# Create a copy of the dataframe for imputation
+df_with_missing = df.copy()
+
+# Store the original values for comparison
+original_values = df_with_missing[target_variable].copy()
+
+# Randomly select 20% of indices to make missing
+np.random.seed(42)  # For reproducibility
+missing_indices = np.random.choice(
+    df_with_missing[df_with_missing[target_variable].notna()].index,
+    size=int(0.2 * len(df_with_missing[df_with_missing[target_variable].notna()])),
+    replace=False
+)
+
+# Store the actual values before making them missing
+actual_missing_values = df_with_missing.loc[missing_indices, target_variable].copy()
+
+# Create missing values
+df_with_missing.loc[missing_indices, target_variable] = np.nan
+
+print(f"Created {len(missing_indices)} missing values ({len(missing_indices)/len(df)*100:.2f}%)")
+print(f"Missing values in {target_variable}: {df_with_missing[target_variable].isna().sum()}")
+
+# Step 5: Perform KNN Imputation and MissForest Imputation
+print("\n" + "="*60)
+print("IMPUTATION METHODS")
+print("="*60)
+
+# Prepare data for imputation (use only numeric columns)
+df_numeric = df_with_missing[numeric_cols].copy()
+
+# KNN Imputation
+print("\nPerforming KNN Imputation...")
+knn_imputer = KNNImputer(n_neighbors=5)
+df_knn = df_numeric.copy()
+df_knn_imputed = pd.DataFrame(
+    knn_imputer.fit_transform(df_knn),
+    columns=df_knn.columns,
+    index=df_knn.index
+)
+knn_imputed_values = df_knn_imputed.loc[missing_indices, target_variable]
+print("KNN Imputation completed!")
+
+# MissForest Imputation (using IterativeImputer with RandomForest)
+print("\nPerforming MissForest Imputation...")
+missforest_imputer = IterativeImputer(
+    estimator=RandomForestRegressor(n_estimators=10, random_state=42),
+    random_state=42,
+    max_iter=10
+)
+df_missforest = df_numeric.copy()
+df_missforest_imputed = pd.DataFrame(
+    missforest_imputer.fit_transform(df_missforest),
+    columns=df_missforest.columns,
+    index=df_missforest.index
+)
+missforest_imputed_values = df_missforest_imputed.loc[missing_indices, target_variable]
+print("MissForest Imputation completed!")
+
+# Step 6: Compare outputs using visualization and error metrics
+print("\n" + "="*60)
+print("COMPARISON OF IMPUTATION METHODS")
+print("="*60)
+
+# Calculate error metrics
+knn_mse = mean_squared_error(actual_missing_values, knn_imputed_values)
+knn_mae = mean_absolute_error(actual_missing_values, knn_imputed_values)
+knn_rmse = np.sqrt(knn_mse)
+knn_r2 = r2_score(actual_missing_values, knn_imputed_values)
+
+missforest_mse = mean_squared_error(actual_missing_values, missforest_imputed_values)
+missforest_mae = mean_absolute_error(actual_missing_values, missforest_imputed_values)
+missforest_rmse = np.sqrt(missforest_mse)
+missforest_r2 = r2_score(actual_missing_values, missforest_imputed_values)
+
+print("\nError Metrics:")
+print("-" * 60)
+print(f"{'Metric':<20} {'KNN Imputation':<20} {'MissForest Imputation':<20}")
+print("-" * 60)
+print(f"{'MSE':<20} {knn_mse:<20.4f} {missforest_mse:<20.4f}")
+print(f"{'RMSE':<20} {knn_rmse:<20.4f} {missforest_rmse:<20.4f}")
+print(f"{'MAE':<20} {knn_mae:<20.4f} {missforest_mae:<20.4f}")
+print(f"{'R² Score':<20} {knn_r2:<20.4f} {missforest_r2:<20.4f}")
+print("-" * 60)
+
+# Visualization 1: Actual vs Predicted Scatter Plots
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+# KNN
+axes[0].scatter(actual_missing_values, knn_imputed_values, alpha=0.6, s=80)
+axes[0].plot([actual_missing_values.min(), actual_missing_values.max()],
+             [actual_missing_values.min(), actual_missing_values.max()],
+             'r--', lw=2, label='Perfect Prediction')
+axes[0].set_xlabel('Actual Values', fontsize=12)
+axes[0].set_ylabel('KNN Imputed Values', fontsize=12)
+axes[0].set_title(f'KNN Imputation\nRMSE: {knn_rmse:.4f}, R²: {knn_r2:.4f}', 
+                  fontsize=14, fontweight='bold')
+axes[0].legend()
+axes[0].grid(True, alpha=0.3)
+
+# MissForest
+axes[1].scatter(actual_missing_values, missforest_imputed_values, alpha=0.6, s=80, color='green')
+axes[1].plot([actual_missing_values.min(), actual_missing_values.max()],
+             [actual_missing_values.min(), actual_missing_values.max()],
+             'r--', lw=2, label='Perfect Prediction')
+axes[1].set_xlabel('Actual Values', fontsize=12)
+axes[1].set_ylabel('MissForest Imputed Values', fontsize=12)
+axes[1].set_title(f'MissForest Imputation\nRMSE: {missforest_rmse:.4f}, R²: {missforest_r2:.4f}',
+                  fontsize=14, fontweight='bold')
+axes[1].legend()
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Visualization 2: Error Distribution
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+knn_errors = actual_missing_values - knn_imputed_values
+missforest_errors = actual_missing_values - missforest_imputed_values
+
+axes[0].hist(knn_errors, bins=30, edgecolor='black', alpha=0.7)
+axes[0].axvline(x=0, color='r', linestyle='--', linewidth=2)
+axes[0].set_xlabel('Error (Actual - Predicted)', fontsize=12)
+axes[0].set_ylabel('Frequency', fontsize=12)
+axes[0].set_title(f'KNN Imputation Error Distribution\nMean Error: {knn_errors.mean():.4f}',
+                  fontsize=14, fontweight='bold')
+axes[0].grid(True, alpha=0.3)
+
+axes[1].hist(missforest_errors, bins=30, edgecolor='black', alpha=0.7, color='green')
+axes[1].axvline(x=0, color='r', linestyle='--', linewidth=2)
+axes[1].set_xlabel('Error (Actual - Predicted)', fontsize=12)
+axes[1].set_ylabel('Frequency', fontsize=12)
+axes[1].set_title(f'MissForest Error Distribution\nMean Error: {missforest_errors.mean():.4f}',
+                  fontsize=14, fontweight='bold')
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Visualization 3: Error Metrics Comparison Bar Chart
+metrics_df = pd.DataFrame({
+    'KNN': [knn_mse, knn_rmse, knn_mae, knn_r2],
+    'MissForest': [missforest_mse, missforest_rmse, missforest_mae, missforest_r2]
+}, index=['MSE', 'RMSE', 'MAE', 'R² Score'])
+
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+for idx, metric in enumerate(['MSE', 'RMSE', 'MAE', 'R² Score']):
+    row = idx // 2
+    col = idx % 2
+    metrics_df.loc[metric].plot(kind='bar', ax=axes[row, col], color=['blue', 'green'])
+    axes[row, col].set_title(f'{metric} Comparison', fontsize=14, fontweight='bold')
+    axes[row, col].set_ylabel(metric, fontsize=12)
+    axes[row, col].set_xlabel('Method', fontsize=12)
+    axes[row, col].tick_params(axis='x', rotation=0)
+    axes[row, col].grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+# Visualization 4: Box plot comparison
+fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+comparison_data = pd.DataFrame({
+    'Actual': actual_missing_values.values,
+    'KNN': knn_imputed_values.values,
+    'MissForest': missforest_imputed_values.values
+})
+
+comparison_data.boxplot(ax=ax)
+ax.set_title('Distribution Comparison: Actual vs Imputed Values', 
+             fontsize=14, fontweight='bold')
+ax.set_ylabel(target_variable, fontsize=12)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Summary
+print("\n" + "="*60)
+print("SUMMARY")
+print("="*60)
+
+better_method = "KNN" if knn_rmse < missforest_rmse else "MissForest"
+print(f"\nBased on RMSE, {better_method} performed better for this dataset.")
+print(f"RMSE difference: {abs(knn_rmse - missforest_rmse):.4f}")
+
+print("\nImputation Analysis Completed Successfully!")
+print("="*60)
