@@ -1,0 +1,390 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.impute import SimpleImputer
+import warnings
+warnings.filterwarnings('ignore')
+
+# Step 1: Input a file
+print("=" * 80)
+print("STEP 1: INPUT FILE")
+print("=" * 80)
+
+# Upload file in Google Colab
+from google.colab import files
+uploaded = files.upload()
+
+# Get the filename
+filename = list(uploaded.keys())[0]
+
+# Read the file (supports CSV and Excel)
+if filename.endswith('.csv'):
+    df = pd.read_csv(filename)
+elif filename.endswith(('.xlsx', '.xls')):
+    df = pd.read_excel(filename)
+else:
+    raise ValueError("Unsupported file format. Please upload CSV or Excel file.")
+
+print(f"\nOriginal Data Shape: {df.shape}")
+print(f"\nFirst 5 rows of Original Data:")
+print(df.head())
+print(f"\nOriginal Data Info:")
+print(df.info())
+
+# Step 1.1: Reverse the data
+print("\n" + "=" * 80)
+print("STEP 1.1: REVERSING THE DATA")
+print("=" * 80)
+
+df_reversed = df.iloc[::-1].reset_index(drop=True)
+print(f"\nReversed Data Shape: {df_reversed.shape}")
+print(f"\nFirst 5 rows of Reversed Data (originally last 5 rows):")
+print(df_reversed.head())
+
+# Step 1.2: Proceed with reversed dataframe
+df = df_reversed.copy()
+
+# Select dependent variable
+print("\n" + "=" * 80)
+print("SELECTING DEPENDENT VARIABLE")
+print("=" * 80)
+print("\nAvailable columns:")
+for i, col in enumerate(df.columns):
+    print(f"{i+1}. {col}")
+
+# Auto-select last column as dependent variable (you can modify this)
+dependent_var = df.columns[-1]
+print(f"\nAutomatically selected dependent variable: {dependent_var}")
+print("(If you want to change this, modify the 'dependent_var' variable in the code)")
+
+# Prepare data - select only numeric columns
+numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+df_numeric = df[numeric_cols].copy()
+
+# Ensure dependent variable is in numeric columns
+if dependent_var not in numeric_cols:
+    print(f"\nWarning: {dependent_var} is not numeric. Using last numeric column instead.")
+    dependent_var = numeric_cols[-1]
+    print(f"New dependent variable: {dependent_var}")
+
+# Step 2: Remove 20% of the data from dependent variable
+print("\n" + "=" * 80)
+print("STEP 2: REMOVING 20% DATA FROM DEPENDENT VARIABLE")
+print("=" * 80)
+
+# Create a copy of the dataframe
+df_with_missing = df_numeric.copy()
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# Get indices of rows where the dependent variable is NOT already missing
+available_indices = df_with_missing[df_with_missing[dependent_var].notna()].index
+
+# Calculate number of values to remove (20%) from available data
+n_available = len(available_indices)
+n_missing = int(n_available * 0.20)
+
+# Randomly select indices from available indices to set as NaN
+missing_indices = np.random.choice(available_indices, size=n_missing, replace=False)
+
+# Store original values before removing them (for comparison later)
+original_values = df_with_missing.loc[missing_indices, dependent_var].copy()
+
+# Remove 20% data by setting to NaN
+df_with_missing.loc[missing_indices, dependent_var] = np.nan
+
+print(f"\nTotal rows in numeric data: {df_numeric.shape[0]}")
+print(f"Rows with original non-missing '{dependent_var}': {n_available}")
+print(f"Missing values created: {n_missing} ({n_missing/n_available*100:.1f}%) from non-missing data")
+print(f"Missing indices (from original non-missing): {sorted(missing_indices.tolist())[:10]}... (showing first 10)")
+
+
+# Step 3: Perform Imputation Techniques
+print("\n" + "=" * 80)
+print("STEP 3: PERFORMING IMPUTATION TECHNIQUES")
+print("=" * 80)
+
+# Prepare feature matrix (X) and target variable (y)
+feature_cols = [col for col in df_numeric.columns if col != dependent_var]
+X = df_with_missing[feature_cols].copy()
+y = df_with_missing[dependent_var].copy()
+
+# Handle missing values in features (if any) using mean imputation
+if X.isnull().any().any():
+    print("\nWarning: Missing values found in features. Imputing with mean...")
+    imputer = SimpleImputer(strategy='mean')
+    X = pd.DataFrame(imputer.fit_transform(X), columns=X.columns, index=X.index)
+
+# Identify rows with missing target values and complete rows
+missing_mask = y.isnull()
+complete_mask = ~missing_mask
+
+X_train = X[complete_mask]
+y_train = y[complete_mask]
+# Filter X_missing to only include rows corresponding to the missing_indices
+X_missing_filtered = X.loc[missing_indices]
+
+
+print(f"\nTraining set size: {len(X_train)} rows")
+print(f"Rows to impute (originally removed): {len(X_missing_filtered)} rows")
+
+
+# Dictionary to store results
+imputed_results = {}
+models = {}
+
+# 3.1: Linear Regression Imputation
+print("\n" + "-" * 80)
+print("3.1: LINEAR REGRESSION IMPUTATION")
+print("-" * 80)
+
+lr_model = LinearRegression()
+lr_model.fit(X_train, y_train)
+# Predict on the filtered missing data
+lr_imputed = lr_model.predict(X_missing_filtered)
+
+# Create complete dataset with Linear Regression imputation
+df_lr = df_with_missing.copy()
+df_lr.loc[missing_indices, dependent_var] = lr_imputed # Impute only at missing_indices
+imputed_results['Linear Regression'] = lr_imputed
+models['Linear Regression'] = lr_model
+
+print("Linear Regression Imputation completed!")
+print(f"Sample imputed values: {lr_imputed[:5]}")
+
+# 3.2: Ridge Regression Imputation
+print("\n" + "-" * 80)
+print("3.2: RIDGE REGRESSION IMPUTATION")
+print("-" * 80)
+
+ridge_model = Ridge(alpha=1.0)  # You can tune alpha
+ridge_model.fit(X_train, y_train)
+# Predict on the filtered missing data
+ridge_imputed = ridge_model.predict(X_missing_filtered)
+
+# Create complete dataset with Ridge Regression imputation
+df_ridge = df_with_missing.copy()
+df_ridge.loc[missing_indices, dependent_var] = ridge_imputed # Impute only at missing_indices
+imputed_results['Ridge Regression'] = ridge_imputed
+models['Ridge Regression'] = ridge_model
+
+print("Ridge Regression Imputation completed!")
+print(f"Sample imputed values: {ridge_imputed[:5]}")
+print(f"Alpha (regularization parameter): {ridge_model.alpha}")
+
+# 3.3: Lasso Regression Imputation
+print("\n" + "-" * 80)
+print("3.3: LASSO REGRESSION IMPUTATION")
+print("-" * 80)
+
+lasso_model = Lasso(alpha=0.1, max_iter=10000)  # You can tune alpha
+lasso_model.fit(X_train, y_train)
+# Predict on the filtered missing data
+lasso_imputed = lasso_model.predict(X_missing_filtered)
+
+# Create complete dataset with Lasso Regression imputation
+df_lasso = df_with_missing.copy()
+df_lasso.loc[missing_indices, dependent_var] = lasso_imputed # Impute only at missing_indices
+imputed_results['Lasso Regression'] = lasso_imputed
+models['Lasso Regression'] = lasso_model
+
+print("Lasso Regression Imputation completed!")
+print(f"Sample imputed values: {lasso_imputed[:5]}")
+print(f"Alpha (regularization parameter): {lasso_model.alpha}")
+
+print("\n" + "=" * 80)
+print("ALL IMPUTATIONS COMPLETED!")
+print("=" * 80)
+
+
+# Step 4: Compare the outputs
+print("\n" + "=" * 80)
+print("STEP 4: COMPARING IMPUTATION TECHNIQUES")
+print("=" * 80)
+
+# Calculate metrics for each method
+comparison_results = []
+
+for method_name, imputed_vals in imputed_results.items():
+    # Ensure original_values and imputed_vals are aligned correctly
+    # (This is already handled by using missing_indices in Step 3 prediction and here)
+    mse = mean_squared_error(original_values, imputed_vals)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(original_values, imputed_vals)
+    r2 = r2_score(original_values, imputed_vals)
+
+    comparison_results.append({
+        'Method': method_name,
+        'MSE': mse,
+        'RMSE': rmse,
+        'MAE': mae,
+        'R²': r2
+    })
+
+comparison_df = pd.DataFrame(comparison_results)
+
+print("\n" + "-" * 80)
+print("PERFORMANCE METRICS COMPARISON")
+print("-" * 80)
+print(comparison_df.to_string(index=False))
+
+# Determine best method
+best_rmse = comparison_df.loc[comparison_df['RMSE'].idxmin()]
+best_mae = comparison_df.loc[comparison_df['MAE'].idxmin()]
+best_r2 = comparison_df.loc[comparison_df['R²'].idxmax()]
+
+print("\n" + "-" * 80)
+print("BEST PERFORMING METHODS")
+print("-" * 80)
+print(f"Best RMSE: {best_rmse['Method']} (RMSE = {best_rmse['RMSE']:.4f})")
+print(f"Best MAE:  {best_mae['Method']} (MAE = {best_mae['MAE']:.4f})")
+print(f"Best R²:   {best_r2['Method']} (R² = {best_r2['R²']:.4f})")
+
+# Step 5: Display the output
+print("\n" + "=" * 80)
+print("STEP 5: DISPLAYING OUTPUT")
+print("=" * 80)
+
+# Create comparison dataframe
+comparison_values = pd.DataFrame({
+    'Original': original_values.values,
+    'Linear Regression': imputed_results['Linear Regression'],
+    'Ridge Regression': imputed_results['Ridge Regression'],
+    'Lasso Regression': imputed_results['Lasso Regression']
+}, index=missing_indices)
+
+# Correct the column names to match the plotting loop
+comparison_values['Linear_Error'] = comparison_values['Linear Regression'] - comparison_values['Original']
+comparison_values['Ridge_Error'] = comparison_values['Ridge Regression'] - comparison_values['Original']
+comparison_values['Lasso_Error'] = comparison_values['Lasso Regression'] - comparison_values['Original']
+
+
+print("\n" + "-" * 80)
+print("IMPUTED VALUES vs ORIGINAL VALUES (First 20 rows)")
+print("-" * 80)
+print(comparison_values.head(20).to_string())
+
+# Visualizations
+print("\n" + "-" * 80)
+print("GENERATING VISUALIZATIONS")
+print("-" * 80)
+
+# Figure 1: Comparison of Imputed vs Original Values
+fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+
+# Scatter plots for each method
+methods = ['Linear Regression', 'Ridge Regression', 'Lasso Regression']
+colors = ['blue', 'green', 'red']
+
+for idx, (method, color) in enumerate(zip(methods, colors)):
+    ax = axes[idx // 2, idx % 2]
+    ax.scatter(comparison_values['Original'], comparison_values[method],
+               alpha=0.6, color=color, s=50)
+
+    # Add diagonal line (perfect prediction)
+    min_val = min(comparison_values['Original'].min(), comparison_values[method].min())
+    max_val = max(comparison_values['Original'].max(), comparison_values[method].max())
+    ax.plot([min_val, max_val], [min_val, max_val], 'k--', lw=2, label='Perfect Prediction')
+
+    ax.set_xlabel('Original Values', fontsize=12)
+    ax.set_ylabel('Imputed Values', fontsize=12)
+    ax.set_title(f'{method}: Imputed vs Original', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+# Performance metrics bar chart
+ax = axes[1, 1]
+x = np.arange(len(methods))
+width = 0.25
+
+rmse_values = [comparison_df[comparison_df['Method'] == m]['RMSE'].values[0] for m in methods]
+mae_values = [comparison_df[comparison_df['Method'] == m]['MAE'].values[0] for m in methods]
+r2_values = [comparison_df[comparison_df['Method'] == m]['R²'].values[0] for m in methods]
+
+ax.bar(x - width, rmse_values, width, label='RMSE', color='skyblue')
+ax.bar(x, mae_values, width, label='MAE', color='lightcoral')
+ax.bar(x + width, r2_values, width, label='R²', color='lightgreen')
+
+ax.set_xlabel('Methods', fontsize=12)
+ax.set_ylabel('Metric Values', fontsize=12)
+ax.set_title('Performance Metrics Comparison', fontsize=14, fontweight='bold')
+ax.set_xticks(x)
+ax.set_xticklabels(methods, rotation=15, ha='right')
+ax.legend()
+ax.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.savefig('imputation_comparison_1.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Figure 2: Error Distribution
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+for idx, (method, color) in enumerate(zip(methods, colors)):
+    ax = axes[idx]
+    # Corrected error column access
+    errors = comparison_values[f'{method.split()[0]}_Error']
+
+    ax.hist(errors, bins=20, alpha=0.7, color=color, edgecolor='black')
+    ax.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Zero Error')
+    ax.axvline(x=errors.mean(), color='green', linestyle='--', linewidth=2,
+               label=f'Mean Error: {errors.mean():.4f}')
+
+    ax.set_xlabel('Error (Imputed - Original)', fontsize=12)
+    ax.set_ylabel('Frequency', fontsize=12)
+    ax.set_title(f'{method}: Error Distribution', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.savefig('imputation_comparison_2.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Figure 3: Box plot comparison
+fig, ax = plt.subplots(figsize=(12, 6))
+
+data_to_plot = [comparison_values['Linear_Error'],
+                comparison_values['Ridge_Error'],
+                comparison_values['Lasso_Error']]
+
+bp = ax.boxplot(data_to_plot, labels=methods, patch_artist=True)
+
+for patch, color in zip(bp['boxes'], colors):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.6)
+
+ax.axhline(y=0, color='red', linestyle='--', linewidth=2, label='Zero Error')
+ax.set_ylabel('Error (Imputed - Original)', fontsize=12)
+ax.set_title('Error Distribution Comparison (Box Plot)', fontsize=14, fontweight='bold')
+ax.legend()
+ax.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.savefig('imputation_comparison_3.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Summary Statistics
+print("\n" + "-" * 80)
+print("SUMMARY STATISTICS OF ERRORS")
+print("-" * 80)
+
+error_summary = pd.DataFrame({
+    'Linear Regression': comparison_values['Linear_Error'].describe(),
+    'Ridge Regression': comparison_values['Ridge_Error'].describe(),
+    'Lasso Regression': comparison_values['Lasso_Error'].describe()
+})
+
+print(error_summary.to_string())
+
+print("\n" + "=" * 80)
+print("IMPUTATION PROCESS COMPLETED!")
+print("=" * 80)
+print("\nAll visualizations have been saved as PNG files.")
+print("You can download the imputed datasets using the variables:")
+print("  - df_lr (Linear Regression imputed)")
+print("  - df_ridge (Ridge Regression imputed)")
+print("  - df_lasso (Lasso Regression imputed)")
