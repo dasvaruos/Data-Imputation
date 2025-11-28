@@ -1,0 +1,99 @@
+import pandas as pd
+import numpy as np
+from google.colab import files
+from sklearn.metrics import mean_squared_error
+
+# Step 1: Upload Excel file
+print("Upload your Excel file:")
+uploaded = files.upload()
+
+# Step 2: Read the uploaded file
+for filename in uploaded.keys():
+    df = pd.read_excel(filename)
+    file_path = filename
+    print(f"File {filename} uploaded successfully.")
+
+# Step 3: Reverse each column individually
+df_reversed = df.copy()
+for col in df.columns:
+    df_reversed[col] = df[col].iloc[::-1].reset_index(drop=True)
+
+# Step 4: Create a new DataFrame by randomly deleting 70 values (set to NaN)
+random_deleted_df = df_reversed.copy()
+total_elements = random_deleted_df.size
+
+np.random.seed(42)  # Optional: for reproducibility
+num_to_delete = 150
+
+random_positions = np.random.choice(total_elements, num_to_delete, replace=False)
+rows, cols = random_deleted_df.shape
+
+for pos in random_positions:
+    row_idx = pos // cols
+    col_idx = pos % cols
+    random_deleted_df.iat[row_idx, col_idx] = np.nan
+
+# Step 5: Save both reversed and modified DataFrames
+output_reversed = file_path.replace(".xlsx", "_column_reversed.xlsx")
+output_deleted = file_path.replace(".xlsx", "_column_reversed_random_deleted.xlsx")
+
+df_reversed.to_excel(output_reversed, index=False)
+random_deleted_df.to_excel(output_deleted, index=False)
+
+# Step: Imputation methods on random_deleted_df
+
+# 1. Mean Imputation
+mean_imputed = random_deleted_df.fillna(random_deleted_df.mean())
+
+# 2. Median Imputation
+median_imputed = random_deleted_df.fillna(random_deleted_df.median())
+
+# 3. Forward Fill Imputation
+ffill_imputed = random_deleted_df.fillna(method='ffill')
+
+# 4. Backward Fill Imputation
+bfill_imputed = random_deleted_df.fillna(method='bfill')
+
+# 5. Minimum Value Imputation (column-wise minimum)
+min_values = random_deleted_df.min()
+min_imputed = random_deleted_df.fillna(min_values)
+
+# 6. Maximum Value Imputation (column-wise maximum)
+max_values = random_deleted_df.max()
+max_imputed = random_deleted_df.fillna(max_values)
+
+# Function to calculate RMSE for a column at missing positions
+def calculate_rmse_column(original_col, imputed_col, missing_mask):
+    original_vals = original_col[missing_mask]
+    imputed_vals = imputed_col[missing_mask]
+
+    # Filter out NaN values before calculating RMSE
+    valid_indices = ~np.isnan(original_vals) & ~np.isnan(imputed_vals)
+    if np.sum(valid_indices) == 0:
+        return None
+    return np.sqrt(mean_squared_error(original_vals[valid_indices], imputed_vals[valid_indices]))
+
+# Calculate RMSE for each column and method at missing positions
+rmse_results = {'Column': [], 'Mean Imputation': [], 'Median Imputation': [], 'Forward Fill': [], 'Backward Fill': [], 'Minimum Value Imputation': [], 'Maximum Value Imputation': []}
+
+for col in df_reversed.columns:
+    if pd.api.types.is_numeric_dtype(df_reversed[col]):
+        missing_mask = random_deleted_df[col].isna()
+        if missing_mask.sum() > 0:
+            rmse_results['Column'].append(col)
+            rmse_results['Mean Imputation'].append(calculate_rmse_column(df_reversed[col], mean_imputed[col], missing_mask))
+            rmse_results['Median Imputation'].append(calculate_rmse_column(df_reversed[col], median_imputed[col], missing_mask))
+            rmse_results['Forward Fill'].append(calculate_rmse_column(df_reversed[col], ffill_imputed[col], missing_mask))
+            rmse_results['Backward Fill'].append(calculate_rmse_column(df_reversed[col], bfill_imputed[col], missing_mask))
+            rmse_results['Minimum Value Imputation'].append(calculate_rmse_column(df_reversed[col], min_imputed[col], missing_mask))
+            rmse_results['Maximum Value Imputation'].append(calculate_rmse_column(df_reversed[col], max_imputed[col], missing_mask))
+
+# Display RMSE results
+rmse_df = pd.DataFrame(rmse_results)
+print("\nRMSE results per column:")
+display(rmse_df)
+
+# Optional: Save the RMSE results dataframe
+rmse_df.to_excel('rmse_report_column_wise.xlsx', index=False)
+print("\nColumn-wise RMSE report saved as: rmse_report_column_wise.xlsx")
+files.download('rmse_report_column_wise.xlsx')
